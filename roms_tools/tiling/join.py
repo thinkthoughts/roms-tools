@@ -2,6 +2,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, cast
 
+import numpy as np
 import xarray as xr
 
 from roms_tools.utils import (
@@ -153,9 +154,49 @@ def _infer_partition_layout_from_datasets(
     return nd, 1
 
 
+def _layout_from_partition_attribute(
+    datasets: Sequence[xr.Dataset],
+) -> tuple[int, int, list[xr.Dataset]] | None:
+    """np_xi, np_eta and the datasets in file order, from ucla-roms' ``partition``
+    global attribute ``(node, nnodes, xi_start, eta_start)``.
+
+    ucla-roms writes it on every per-rank file, as does its reference partitioner
+    ``Tools-Roms/partit.F`` and :func:`roms_tools.tiling.partition.partition`.
+    ``None`` unless every dataset carries a consistent attribute: the same ``nnodes``,
+    equal to the number of datasets, and one tile per (xi_start, eta_start) pair.
+    """
+    entries = []
+    for ds in datasets:
+        value = ds.attrs.get("partition")
+        if value is None:
+            return None
+        flat = np.asarray(value).ravel()
+        if flat.size != 4 or not np.issubdtype(flat.dtype, np.integer):
+            return None
+        entries.append(tuple(int(v) for v in flat))
+    nd = len(datasets)
+    if {e[1] for e in entries} != {nd}:
+        return None
+    xi_starts = sorted({e[2] for e in entries})
+    eta_starts = sorted({e[3] for e in entries})
+    np_xi, np_eta = len(xi_starts), len(eta_starts)
+    positions = {(e[3], e[2]) for e in entries}
+    if np_xi * np_eta != nd or len(positions) != nd:
+        return None
+    order = sorted(range(nd), key=lambda k: (entries[k][3], entries[k][2]))
+    return np_xi, np_eta, [datasets[k] for k in order]
+
+
 def join_datasets(datasets: Sequence[xr.Dataset]) -> xr.Dataset:
-    """Take a sequence of partitioned Datasets and return a joined Dataset."""
-    np_xi, np_eta = _infer_partition_layout_from_datasets(datasets)
+    """Take a sequence of partitioned Datasets and return a joined Dataset.
+
+    Tiles are placed by ucla-roms' ``partition`` global attribute when every dataset
+    carries it, otherwise by the layout inferred from their dimension sizes.
+    """
+    if (layout := _layout_from_partition_attribute(datasets)) is not None:
+        np_xi, np_eta, datasets = layout
+    else:
+        np_xi, np_eta = _infer_partition_layout_from_datasets(datasets)
 
     # Arrange into grid
     grid = [[datasets[j + i * np_xi] for j in range(np_xi)] for i in range(np_eta)]
@@ -195,7 +236,10 @@ def join_datasets(datasets: Sequence[xr.Dataset]) -> xr.Dataset:
             final_dataset[varname] = xr.concat(
                 var_slices, dim=eta_dim, combine_attrs="override"
             )
-    # Copy attributes from first dataset
-    final_dataset.attrs = datasets[0].attrs
+    # Copy attributes from first dataset; the tile's position does not apply to the
+    # joined dataset
+    final_dataset.attrs = {
+        k: v for k, v in datasets[0].attrs.items() if k != "partition"
+    }
 
     return final_dataset

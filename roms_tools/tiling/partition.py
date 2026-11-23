@@ -71,6 +71,28 @@ def _compute_partition_sizes(
     return sizes
 
 
+def _rho_starts(partitioned_sizes: dict[str, list[int]], axis: str, nparts: int) -> list[int] | None:
+    """1-based index, in the whole grid's rho points, of each tile's first rho point
+    along ``axis``, as ucla-roms records it in the ``partition`` attribute
+    (``iSW_corn + iwest`` on the first tile, ``iSW_corn + iwest + 1`` on the others).
+
+    Read off the first fine-grid dimension of ``axis`` that is partitioned: a
+    dimension with a ghost point at both ends starts its tiles on rho points, one with
+    a ghost point at the upper end only (u or v points) one point earlier. ``None`` if
+    ``axis`` is split but has no partitioned fine-grid dimension.
+    """
+    if nparts == 1:
+        return [1]
+    for dim, sizes in partitioned_sizes.items():
+        info = DIM_INFO[dim]
+        if info["axis"] != axis or "coarse" in dim:
+            continue
+        bounds = _cumsum(sizes)
+        offset = 1 if info["edge"] == "both" else 2
+        return [1] + [int(b) + offset for b in bounds[1:-1]]
+    return None
+
+
 def _cumsum(sizes: list[int]) -> np.ndarray:
     out = np.zeros(len(sizes) + 1, dtype=int)
     out[1:] = np.cumsum(sizes)
@@ -120,6 +142,12 @@ def partition(
 
     Notes
     -----
+    When there is more than one tile, each tile carries ucla-roms' global attribute
+    ``partition = (node, nnodes, xi_start, eta_start)``, as ucla-roms and its reference
+    partitioner write it: the tile's file number, the number of tiles, and the 1-based
+    indices, in the whole grid's rho points, of the tile's first rho point. ``join_datasets``
+    and ucla-roms' ``ncjoin`` place tiles by it.
+
     Tiles follow ucla-roms' domain decomposition (``mpi_setup``): along each dimension every
     tile gets ``ceil(points / n)`` interior points, and the surplus is removed from the first
     tile (half, rounded down) and the last tile (the rest), so tilings that do not divide the
@@ -171,6 +199,9 @@ def partition(
 
     file_numbers = []
     partitioned_datasets = []
+    nnodes = np_eta * np_xi
+    xi_starts = _rho_starts(partitioned_sizes, "xi", np_xi)
+    eta_starts = _rho_starts(partitioned_sizes, "eta", np_eta)
 
     for i in range(np_eta):
         for j in range(np_xi):
@@ -183,7 +214,18 @@ def partition(
                 bounds = _cumsum(sizes)
                 indexers[dim] = slice(bounds[idx], bounds[idx + 1])
 
-            partitioned_datasets.append(ds.isel(**indexers))
+            tile = ds.isel(**indexers)
+            if nnodes > 1 and xi_starts is not None and eta_starts is not None:
+                # ucla-roms' partition attribute (as Tools-Roms/partit.F writes it),
+                # which identifies the tile's place in the processor grid.
+                tile.attrs = {
+                    **tile.attrs,
+                    "partition": np.array(
+                        [j + i * np_xi, nnodes, xi_starts[j], eta_starts[i]],
+                        dtype=np.int32,
+                    ),
+                }
+            partitioned_datasets.append(tile)
 
     return file_numbers, partitioned_datasets
 
