@@ -1,9 +1,13 @@
 import logging
 import re
 import typing as t
+from typing import cast
 
 import numpy as np
 import xarray as xr
+
+# Dimensions of a units string: sorted (base dimension, exponent) pairs.
+_Dims = tuple[tuple[str, int], ...]
 
 # Molar mass of CO2 (kg mol^-1): 44.0095 g mol^-1 = 12.0107 + 2 * 15.9994, the standard
 # atomic weights of carbon and oxygen in the IUPAC 2007 table (Pure Appl. Chem. 81,
@@ -186,7 +190,10 @@ def compute_cdr_metrics(
     # Cumulative flux-based uptake (Method 1)
     flux = (
         (
-            ((ds["FG_CO2"] - ds["FG_ALT_CO2"] * (mol_flux_alt / mol_flux)) * ds_cdr["area"])
+            (
+                (ds["FG_CO2"] - ds["FG_ALT_CO2"] * (mol_flux_alt / mol_flux))
+                * ds_cdr["area"]
+            )
             .isel(_INTERIOR)
             .sum(dim=["eta_rho", "xi_rho"])
             * ds_cdr["window_length"]
@@ -350,7 +357,7 @@ def _validate_source(ds: xr.Dataset, source_role: SourceRole):
 
 
 def _native_carbon_amount_to_tonnes_co2_scale(
-    units: str | None, expected: tuple[str, ...] | None = None
+    units: str | None, expected: _Dims | tuple[_Dims, ...] | None = None
 ) -> float:
     """
     Scale factor from integrated ROMS-style DIC carbon amounts to tonnes CO2.
@@ -389,11 +396,11 @@ _MASS_UNITS = {"kg", "g"}
 _SYMBOL_ALIASES = {"mMol": "mmol"}
 # Dimensions as sorted (base, exponent) pairs; N: amount of carbon, E: equivalents
 # of alkalinity, L: length, T: time, M: mass.
-_FLUX_DIMS = (("L", -2), ("N", 1), ("T", -1))
-_INVENTORY_DIMS = (("L", -2), ("N", 1))
-_RATE_DIMS = (("N", 1), ("T", -1))
-_ALK_RATE_DIMS = (("E", 1), ("T", -1))
-_UNIT_CONTRACT: dict[str, tuple] = {
+_FLUX_DIMS: _Dims = (("L", -2), ("N", 1), ("T", -1))
+_INVENTORY_DIMS: _Dims = (("L", -2), ("N", 1))
+_RATE_DIMS: _Dims = (("N", 1), ("T", -1))
+_ALK_RATE_DIMS: _Dims = (("E", 1), ("T", -1))
+_UNIT_CONTRACT: dict[str, _Dims] = {
     "FG_CO2": _FLUX_DIMS,
     "FG_ALT_CO2": _FLUX_DIMS,
     "hDIC": _INVENTORY_DIMS,
@@ -412,7 +419,7 @@ _DIMENSION_NAMES = {
 }
 
 
-def _parse_units(units: str) -> tuple[float, tuple]:
+def _parse_units(units: str) -> tuple[float, _Dims]:
     """Factor to mol (or eq), and dimensions, of a units string.
 
     Grammar: factors separated by spaces, ``*`` or ``.``; ``/`` divides by the next
@@ -430,7 +437,14 @@ def _parse_units(units: str) -> tuple[float, tuple]:
     """
     u = units.strip().replace("µ", "u").replace("μ", "u").replace("micromol", "umol")
     u = u.replace("**", "^").replace("·", " ").replace("*", " ")
-    if not u or "(" in u or ")" in u or "//" in u or u.startswith("/") or u.endswith("/"):
+    if (
+        not u
+        or "(" in u
+        or ")" in u
+        or "//" in u
+        or u.startswith("/")
+        or u.endswith("/")
+    ):
         raise ValueError(f"malformed units {units!r}")
     tokens = re.findall(r"/|[^\s/]+", u)
     factor = 1.0
@@ -467,7 +481,13 @@ def _parse_units(units: str) -> tuple[float, tuple]:
             else:
                 hint = (
                     "; unit symbols are case-sensitive"
-                    if symbol.lower() in {*_AMOUNT_UNITS, *_EQUIVALENT_UNITS, *_LENGTH_UNITS, *_TIME_UNITS}
+                    if symbol.lower()
+                    in {
+                        *_AMOUNT_UNITS,
+                        *_EQUIVALENT_UNITS,
+                        *_LENGTH_UNITS,
+                        *_TIME_UNITS,
+                    }
                     else ""
                 )
                 raise ValueError(
@@ -484,7 +504,9 @@ def _parse_units(units: str) -> tuple[float, tuple]:
 
 
 def _native_dic_amount_to_mol_multiplier(
-    units: str | None, expected: tuple[str, ...] | None = None, var: str = "DIC carbon"
+    units: str | None,
+    expected: _Dims | tuple[_Dims, ...] | None = None,
+    var: str = "DIC carbon",
 ) -> float:
     """Moles (or equivalents) per native unit, after checking the units' dimensions.
 
@@ -499,28 +521,33 @@ def _native_dic_amount_to_mol_multiplier(
         than expected (for example ``umol/kg``, mass-normalised, where an amount per
         area is expected).
     """
+    accepted: tuple[_Dims, ...]
     if expected is None:
-        expected = (_FLUX_DIMS, _INVENTORY_DIMS)
+        accepted = (_FLUX_DIMS, _INVENTORY_DIMS)
     elif expected and isinstance(expected[0][0], str):
-        expected = (expected,)
+        accepted = (cast("_Dims", expected),)
+    else:
+        accepted = cast("tuple[_Dims, ...]", expected)
     if units is None or not str(units).strip():
         logging.warning(
-            "%s amount units are missing; assuming mmol for conversion to tonnes CO2.", var
+            "%s amount units are missing; assuming mmol for conversion to tonnes CO2.",
+            var,
         )
         return 1e-3
     try:
         factor, dims = _parse_units(str(units))
     except ValueError as e:
         raise ValueError(f"{var}: {e}") from None
-    if dims not in expected:
-        wanted = " or ".join(_DIMENSION_NAMES.get(d, str(d)) for d in expected)
+    if dims not in accepted:
+        wanted = " or ".join(_DIMENSION_NAMES.get(d, str(d)) for d in accepted)
         raise ValueError(f"{var} units {units!r} are not {wanted}.")
     return factor
 
 
 def _contract_factor(ds: xr.Dataset, var: str, default: float = 1e-3) -> float:
     """Factor to mol (or eq) of ``ds[var]`` under ``_UNIT_CONTRACT``. Missing units
-    give ``default`` without a warning (source terms: the ucla-roms milli-units)."""
+    give ``default`` without a warning (source terms: the ucla-roms milli-units).
+    """
     units = ds[var].attrs.get("units")
     if units is None or not str(units).strip():
         return default

@@ -391,8 +391,9 @@ def test_tonnes_co2_per_mmol_independent_value() -> None:
     assert tonnes_per_mmol == Fraction(88019, 2 * 10**12)
     for units in ["mmol/m^2/s", "mmol/m^2", "meters mmol/m^3"]:
         scale = _native_carbon_amount_to_tonnes_co2_scale(units)
-        assert abs(Fraction(scale) - tonnes_per_mmol) <= tonnes_per_mmol * Fraction(1, 10**15)
-
+        assert abs(Fraction(scale) - tonnes_per_mmol) <= tonnes_per_mmol * Fraction(
+            1, 10**15
+        )
 
 
 # --- Units contract (see cdr_analysis._UNIT_CONTRACT) ---------------------------------
@@ -495,8 +496,14 @@ def test_units_contract_missing_units_default_to_mmol(units, caplog):
 
 def test_units_contract_covers_every_variable_read():
     assert set(_UNIT_CONTRACT) == {
-        "FG_CO2", "FG_ALT_CO2", "hDIC", "hDIC_ALT_CO2",
-        "ALK_source", "ALK_ALT_source", "DIC_source", "DIC_ALT_source",
+        "FG_CO2",
+        "FG_ALT_CO2",
+        "hDIC",
+        "hDIC_ALT_CO2",
+        "ALK_source",
+        "ALK_ALT_source",
+        "DIC_source",
+        "DIC_ALT_source",
     }
 
 
@@ -523,7 +530,9 @@ def _ucla_roms_units(ds):
         ("DIC_source", "mmol/m^2/s"),
     ],
 )
-def test_compute_cdr_metrics_refuses_wrong_dimensions(minimal_ds, minimal_grid_ds, var, units):
+def test_compute_cdr_metrics_refuses_wrong_dimensions(
+    minimal_ds, minimal_grid_ds, var, units
+):
     ds = _ucla_roms_units(minimal_ds.copy())
     ds[var].attrs["units"] = units
     with pytest.raises(ValueError, match=var):
@@ -546,7 +555,8 @@ def test_compute_cdr_metrics_ucla_roms_units_unchanged(minimal_ds, minimal_grid_
 
 def test_compute_cdr_metrics_converts_mixed_prefixes(minimal_ds, minimal_grid_ds):
     """The same physical data in mol and umol give the same efficiencies and tonnes:
-    previously the efficiency divided an uptake in one prefix by a source in another."""
+    previously the efficiency divided an uptake in one prefix by a source in another.
+    """
     ref = compute_cdr_metrics(_ucla_roms_units(minimal_ds.copy()), minimal_grid_ds)
     ds = _ucla_roms_units(minimal_ds.copy())
     ds["FG_CO2"] = ds["FG_CO2"] * 1e-3

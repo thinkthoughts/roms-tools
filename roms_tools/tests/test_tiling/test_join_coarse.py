@@ -10,7 +10,8 @@ from roms_tools.tiling.partition import partition
 
 def _grid(n_xi: int, n_eta: int) -> xr.Dataset:
     """A grid-like dataset with ``n_xi`` x ``n_eta`` interior rho points and the
-    coarse grid ROMS-Tools derives from it, every value distinct."""
+    coarse grid ROMS-Tools derives from it, every value distinct.
+    """
     rng = np.random.default_rng(0)
     xr_, er = n_xi + 2, n_eta + 2
     xc, ec = (xr_ - 2) // 2 + 2, (er - 2) // 2 + 2
@@ -53,7 +54,9 @@ def test_whole_coarse_dims_are_copied_not_joined(n_xi, n_eta, np_xi, np_eta):
 def test_split_coarse_dims_are_still_joined(np_xi, np_eta):
     ds = _grid(36, 22)
     _, tiles = partition(ds, np_eta=np_eta, np_xi=np_xi, include_coarse_dims=True)
-    assert all(t.sizes["xi_coarse"] < ds.sizes["xi_coarse"] for t in tiles) or np_xi == 1
+    assert (
+        all(t.sizes["xi_coarse"] < ds.sizes["xi_coarse"] for t in tiles) or np_xi == 1
+    )
     _assert_same(join_datasets(tiles), ds)
 
 
@@ -65,7 +68,9 @@ def test_tiles_copied_by_hand_join_to_the_source():
     tiles = []
     for k in range(3):
         a, b = edges[k], edges[k + 1]
-        tile = ds.isel(xi_rho=slice(a, b), xi_u=slice(max(a - 1, 0), b - 1 if k < 2 else 38))
+        tile = ds.isel(
+            xi_rho=slice(a, b), xi_u=slice(max(a - 1, 0), b - 1 if k < 2 else 38)
+        )
         tiles.append(tile.assign_attrs(partition=np.array([k, 3, a + 1, 1], np.int32)))
     assert [t.sizes["xi_u"] for t in tiles] == [12, 13, 13]
     _assert_same(join_datasets(tiles), ds)

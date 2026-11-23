@@ -29,8 +29,12 @@ def test_partition_writes_the_ucla_roms_partition_attribute():
     _, parts = partition(_rho_only(10, 4), np_eta=2, np_xi=3)
     got = [tuple(int(v) for v in p.attrs["partition"]) for p in parts]
     assert got == [
-        (0, 6, 1, 1), (1, 6, 5, 1), (2, 6, 9, 1),
-        (3, 6, 1, 4), (4, 6, 5, 4), (5, 6, 9, 4),
+        (0, 6, 1, 1),
+        (1, 6, 5, 1),
+        (2, 6, 9, 1),
+        (3, 6, 1, 4),
+        (4, 6, 5, 4),
+        (5, 6, 9, 4),
     ]
 
 
