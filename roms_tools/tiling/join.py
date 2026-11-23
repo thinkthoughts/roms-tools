@@ -187,11 +187,44 @@ def _layout_from_partition_attribute(
     return np_xi, np_eta, [datasets[k] for k in order]
 
 
+def _coarse_is_whole(
+    dim: str, slices: Sequence[xr.DataArray], fine_rho_points: int | None
+) -> bool:
+    """Whether every tile holds the whole coarse dimension ``dim``.
+
+    ucla-roms ``partit`` (``Tools-Roms/partit.F``) and
+    :func:`roms_tools.tiling.partition.partition` with ``include_coarse_dims=False``
+    leave ``xi_coarse`` and ``eta_coarse`` unsplit, so every tile holds all
+    ``(n - 2) // 2 + 2`` coarse points of a fine grid of ``n`` rho points
+    (:func:`roms_tools.setup.grid._f2c_xdir`); ``ncjoin`` copies such a dimension
+    rather than joining it. Split coarse tiles add up to that size instead, so with
+    more than one tile the two cases are told apart by size.
+    """
+    if not dim.endswith("_coarse") or len(slices) < 2 or fine_rho_points is None:
+        return False
+    whole = (fine_rho_points - 2) // 2 + 2
+    return all(s.sizes[dim] == whole for s in slices)
+
+
+def _fine_rho_points(tiles: Sequence[xr.Dataset], axis: str) -> int | None:
+    """Rho points of the joined fine grid along ``axis`` ("xi" or "eta"), from one
+    row (xi) or column (eta) of tiles; ``None`` if the tiles carry no rho or
+    u/v dimension along it."""
+    staggered = "xi_u" if axis == "xi" else "eta_v"
+    if all(f"{axis}_rho" in t.sizes for t in tiles):
+        return sum(t.sizes[f"{axis}_rho"] for t in tiles)
+    if all(staggered in t.sizes for t in tiles):
+        return sum(t.sizes[staggered] for t in tiles) + 1
+    return None
+
+
 def join_datasets(datasets: Sequence[xr.Dataset]) -> xr.Dataset:
     """Take a sequence of partitioned Datasets and return a joined Dataset.
 
     Tiles are placed by ucla-roms' ``partition`` global attribute when every dataset
-    carries it, otherwise by the layout inferred from their dimension sizes.
+    carries it, otherwise by the layout inferred from their dimension sizes. Coarse
+    dimensions that every tile holds whole, as ucla-roms ``partit`` writes them, are
+    copied rather than joined, as ``ncjoin`` does.
     """
     if (layout := _layout_from_partition_attribute(datasets)) is not None:
         np_xi, np_eta, datasets = layout
@@ -200,6 +233,9 @@ def join_datasets(datasets: Sequence[xr.Dataset]) -> xr.Dataset:
 
     # Arrange into grid
     grid = [[datasets[j + i * np_xi] for j in range(np_xi)] for i in range(np_eta)]
+
+    fine_xi = _fine_rho_points(grid[0], "xi")
+    fine_eta = _fine_rho_points([row[0] for row in grid], "eta")
 
     # Join each row (along xi_*)
     rows_joined = []
@@ -211,7 +247,7 @@ def join_datasets(datasets: Sequence[xr.Dataset]) -> xr.Dataset:
             var_slices = [ds[varname] for ds in row if varname in ds]
             xi_dims = [dim for dim in var_slices[0].dims if dim.startswith("xi_")]
 
-            if not xi_dims:
+            if not xi_dims or _coarse_is_whole(xi_dims[0], var_slices, fine_xi):
                 row_dataset[varname] = var_slices[0]
             else:
                 xi_dim = xi_dims[0]
@@ -229,7 +265,7 @@ def join_datasets(datasets: Sequence[xr.Dataset]) -> xr.Dataset:
         var_slices = [ds[varname] for ds in rows_joined if varname in ds]
         eta_dims = [dim for dim in var_slices[0].dims if dim.startswith("eta_")]
 
-        if not eta_dims:
+        if not eta_dims or _coarse_is_whole(eta_dims[0], var_slices, fine_eta):
             final_dataset[varname] = var_slices[0]
         else:
             eta_dim = eta_dims[0]
