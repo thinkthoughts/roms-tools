@@ -76,3 +76,47 @@ def test_compute_depth_coordinates():
 
     with pytest.raises(ValueError, match="Invalid location"):
         compute_depth_coordinates(grid_ds, location="invalid")
+
+
+# CSF of ucla-roms 0.16.0 (src/set_scoord_mod.F90, compiled unchanged) at
+# sigma = -0.9 and -0.5, for (theta_s, theta_b).
+UCLA_ROMS_CSF = {
+    (0.0, 0.0): (-8.10000000000000053e-01, -2.50000000000000000e-01),
+    (0.0, 2.0): (-9.27644305782258205e-01, -4.55054233923411267e-01),
+    (5.0, 0.0): (-6.01204085447860526e-01, -7.01037165451081495e-02),
+    (5.0, 2.0): (-8.09019067166472428e-01, -1.51298043077170458e-01),
+    (10.0, 10.0): (-9.74776354271068568e-01, -6.43218211624036751e-02),
+}
+
+
+@pytest.mark.parametrize(("theta_s", "theta_b"), list(UCLA_ROMS_CSF))
+def test_compute_cs_matches_ucla_roms_csf(theta_s, theta_b):
+    """ucla-roms takes theta_s = 0 as csrf = -sigma**2 and theta_b = 0 as no bottom
+    refinement (CSF = csrf); both are the theta -> 0 limits of the stretching."""
+    cs = compute_cs(np.array([-0.9, -0.5]), theta_s, theta_b)
+    np.testing.assert_allclose(cs, UCLA_ROMS_CSF[(theta_s, theta_b)], rtol=1e-14, atol=0)
+
+
+@pytest.mark.parametrize(("theta_s", "theta_b"), [(0.0, 0.0), (0.0, 2.0), (5.0, 0.0)])
+def test_compute_cs_endpoints_with_zero_theta(theta_s, theta_b):
+    assert compute_cs(np.float64(0.0), theta_s, theta_b) == 0.0
+    assert compute_cs(np.float64(-1.0), theta_s, theta_b) == -1.0
+
+
+def test_compute_cs_is_continuous_at_zero_theta():
+    # theta_s -> 0: (1 - cosh(t s)) / (cosh t - 1) = -s**2 + O(t**2); the formula loses
+    # about 4e-16 / t**2 to cancellation (in ucla-roms too), so t = 1e-3 tests both.
+    # theta_b -> 0: (exp(t C) - 1) / (1 - exp(-t)) = C + O(t).
+    sigma = np.linspace(-1, 0, 41)
+    np.testing.assert_allclose(
+        compute_cs(sigma, 1e-3, 2.0), compute_cs(sigma, 0.0, 2.0), atol=1e-6
+    )
+    np.testing.assert_allclose(
+        compute_cs(sigma, 5.0, 1e-3), compute_cs(sigma, 5.0, 0.0), atol=1e-3
+    )
+
+
+@pytest.mark.parametrize(("theta_s", "theta_b"), [(-0.1, 2.0), (5.0, -0.1)])
+def test_compute_cs_refuses_negative_theta(theta_s, theta_b):
+    with pytest.raises(ValueError, match="must be between 0 and"):
+        compute_cs(np.array([-0.5]), theta_s, theta_b)

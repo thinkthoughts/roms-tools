@@ -1,0 +1,1 @@
+`Grid` (and `compute_cs`) now accept `theta_s = 0` and `theta_b = 0`, as ucla-roms does: `theta_s = 0` gives the stretching `-sigma**2` and `theta_b = 0` no bottom refinement, the limits of the two steps of the Shchepetkin and McWilliams (2009) stretching that ucla-roms' `CSF` (`set_scoord_mod.F90`) computes.

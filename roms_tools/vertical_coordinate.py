@@ -18,9 +18,9 @@ def compute_cs(sigma, theta_s, theta_b):
     sigma : np.ndarray or float
         The sigma-coordinate values.
     theta_s : float
-        The surface control parameter.
+        The surface control parameter, 0 <= theta_s <= 10.
     theta_b : float
-        The bottom control parameter.
+        The bottom control parameter, 0 <= theta_b <= 10.
 
     Returns
     -------
@@ -32,13 +32,19 @@ def compute_cs(sigma, theta_s, theta_b):
     ValueError
         If theta_s or theta_b are not within the valid range.
     """
-    if not (0 < theta_s <= UPPER_BOUND_THETA_S):
+    if not (0 <= theta_s <= UPPER_BOUND_THETA_S):
         raise ValueError(f"theta_s must be between 0 and {UPPER_BOUND_THETA_S}.")
-    if not (0 < theta_b <= UPPER_BOUND_THETA_B):
+    if not (0 <= theta_b <= UPPER_BOUND_THETA_B):
         raise ValueError(f"theta_b must be between 0 and {UPPER_BOUND_THETA_B}.")
 
-    C = (1 - np.cosh(theta_s * sigma)) / (np.cosh(theta_s) - 1)
-    C = (np.exp(theta_b * C) - 1) / (1 - np.exp(-theta_b))
+    # As ucla-roms' CSF (src/set_scoord_mod.F90): theta_s = 0 gives -sigma**2 and
+    # theta_b = 0 no bottom refinement, the theta -> 0 limits of the two steps.
+    if theta_s > 0:
+        C = (1 - np.cosh(theta_s * sigma)) / (np.cosh(theta_s) - 1)
+    else:
+        C = -(sigma**2)
+    if theta_b > 0:
+        C = (np.exp(theta_b * C) - 1) / (1 - np.exp(-theta_b))
 
     return C
 
