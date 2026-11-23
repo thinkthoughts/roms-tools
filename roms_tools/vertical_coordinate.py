@@ -39,12 +39,16 @@ def compute_cs(sigma, theta_s, theta_b):
 
     # As ucla-roms' CSF (src/set_scoord_mod.F90): theta_s = 0 gives -sigma**2 and
     # theta_b = 0 no bottom refinement, the theta -> 0 limits of the two steps.
+    # The two steps are (1 - cosh(theta_s sigma)) / (cosh(theta_s) - 1) and
+    # (exp(theta_b C) - 1) / (1 - exp(-theta_b)), written without their cancellation
+    # for small theta (cosh(x) - 1 = 2 sinh(x / 2)**2), as in RLT-CSTAR research
+    # branch research/rlt-cstar-007-stable-csf of ucla-roms.
     if theta_s > 0:
-        C = (1 - np.cosh(theta_s * sigma)) / (np.cosh(theta_s) - 1)
+        C = -((np.sinh(0.5 * theta_s * sigma) / np.sinh(0.5 * theta_s)) ** 2)
     else:
         C = -(sigma**2)
     if theta_b > 0:
-        C = (np.exp(theta_b * C) - 1) / (1 - np.exp(-theta_b))
+        C = np.expm1(theta_b * C) / -np.expm1(-theta_b)
 
     return C
 
