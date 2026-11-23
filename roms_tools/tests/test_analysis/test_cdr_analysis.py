@@ -391,5 +391,6 @@ def test_tonnes_co2_per_mmol_independent_value() -> None:
     assert tonnes_per_mmol == Fraction(88019, 2 * 10**12)
     for units in ["mmol/m^2/s", "mmol/m^2", "meters mmol/m^3"]:
         scale = _native_carbon_amount_to_tonnes_co2_scale(units)
-        assert abs(Fraction(scale) - tonnes_per_mmol) <= tonnes_per_mmol * Fraction(1, 10**15)
-
+        assert abs(Fraction(scale) - tonnes_per_mmol) <= tonnes_per_mmol * Fraction(
+            1, 10**15
+        )
