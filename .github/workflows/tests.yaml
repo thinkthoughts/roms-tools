@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - rlt-cstar/ci-009  # fork CI for RLT-CSTAR-009 only
   pull_request:
     branches:
       - main
@@ -88,6 +89,7 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4.0.1
+        if: github.repository_owner == 'CWorthy-ocean'  # fork CI: no Codecov upload
         continue-on-error: true
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -164,6 +166,7 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4.0.1
+        if: github.repository_owner == 'CWorthy-ocean'  # fork CI: no Codecov upload
         continue-on-error: true
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -232,6 +235,7 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4.0.1
+        if: github.repository_owner == 'CWorthy-ocean'  # fork CI: no Codecov upload
         continue-on-error: true
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -300,6 +304,7 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4.0.1
+        if: github.repository_owner == 'CWorthy-ocean'  # fork CI: no Codecov upload
         continue-on-error: true
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -376,6 +381,7 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4.0.1
+        if: github.repository_owner == 'CWorthy-ocean'  # fork CI: no Codecov upload
         continue-on-error: true
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
