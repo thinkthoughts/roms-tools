@@ -82,9 +82,9 @@ class Grid:
     N : int, optional
         The number of vertical levels. The default is 100.
     theta_s : float, optional
-        The surface control parameter. Must satisfy 0 < theta_s <= 10. The default is 5.0.
+        The surface control parameter. Must satisfy 0 <= theta_s <= 10. The default is 5.0.
     theta_b : float, optional
-        The bottom control parameter. Must satisfy 0 < theta_b <= 10. The default is 2.0.
+        The bottom control parameter. Must satisfy 0 <= theta_b <= 10 (0: no bottom refinement). The default is 2.0.
     hc : float, optional
         The critical depth (in meters). The default is 300.0.
     verbose: bool, optional
