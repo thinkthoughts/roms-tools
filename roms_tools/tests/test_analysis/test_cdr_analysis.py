@@ -393,3 +393,174 @@ def test_tonnes_co2_per_mmol_independent_value() -> None:
         scale = _native_carbon_amount_to_tonnes_co2_scale(units)
         assert abs(Fraction(scale) - tonnes_per_mmol) <= tonnes_per_mmol * Fraction(1, 10**15)
 
+
+
+# --- Units contract (see cdr_analysis._UNIT_CONTRACT) ---------------------------------
+from roms_tools.analysis.cdr_analysis import (  # noqa: E402
+    _FLUX_DIMS,
+    _INVENTORY_DIMS,
+    _UNIT_CONTRACT,
+    _parse_units,
+)
+
+
+@pytest.mark.parametrize(
+    ("units", "mol", "dims"),
+    [
+        # as ucla-roms writes them (cdr_output.F90; MARBL MKS units)
+        ("mmol/m^2/s", 1e-3, _FLUX_DIMS),
+        ("meters mmol/m^3", 1e-3, _INVENTORY_DIMS),
+        ("meters * mmol/m^3", 1e-3, _INVENTORY_DIMS),
+        # equivalent spellings of the same dimensions
+        ("mmol m-2 s-1", 1e-3, _FLUX_DIMS),
+        ("mmol/m2/s", 1e-3, _FLUX_DIMS),
+        ("mmol m**-2 s**-1", 1e-3, _FLUX_DIMS),
+        ("mmol/m^2", 1e-3, _INVENTORY_DIMS),
+        ("m mmol m-3", 1e-3, _INVENTORY_DIMS),
+        ("mol/m^2/s", 1.0, _FLUX_DIMS),
+        ("umol/m^2/s", 1e-6, _FLUX_DIMS),
+        ("µmol/m^2/s", 1e-6, _FLUX_DIMS),
+        ("nmol/m^2/s", 1e-9, _FLUX_DIMS),
+        ("metres nmol/m^3", 1e-9, _INVENTORY_DIMS),
+    ],
+)
+def test_units_contract_accepts(units, mol, dims):
+    assert _parse_units(units) == (mol, dims)
+    assert _native_dic_amount_to_mol_multiplier(units, dims) == mol
+
+
+@pytest.mark.parametrize(
+    ("units", "expected"),
+    [
+        # mass-normalised: an amount per kg of seawater is no amount per area
+        ("umol/kg", _FLUX_DIMS),
+        ("umol/kg", _INVENTORY_DIMS),
+        ("mmol/kg/s", _FLUX_DIMS),
+        # concentration where an inventory or flux is expected
+        ("mmol/m^3", _INVENTORY_DIMS),
+        ("mmol/m^3", _FLUX_DIMS),
+        # an inventory where a flux is expected, and the reverse
+        ("mmol/m^2", _FLUX_DIMS),
+        ("mmol/m^2/s", _INVENTORY_DIMS),
+        # bare amount, area or time
+        ("mmol", _FLUX_DIMS),
+        ("m^2", _INVENTORY_DIMS),
+        ("mmol/s", _FLUX_DIMS),
+        # equivalents (alkalinity) where carbon is expected
+        ("meq/m^2/s", _FLUX_DIMS),
+    ],
+)
+def test_units_contract_refuses_other_dimensions(units, expected):
+    with pytest.raises(ValueError, match="are not|exactly one amount"):
+        _native_dic_amount_to_mol_multiplier(units, expected)
+
+
+@pytest.mark.parametrize(
+    "units",
+    [
+        # MARBL's CGS units, other length and time units, mass
+        "nmol/cm^2/s",
+        "nmol/cm^3",
+        "mmol/m^3 cm/s",
+        "mmol/m^2/day",
+        "mmol/m^2/h",
+        "mol/m^2/yr",
+        "kg/m^2/s",
+        "g C/m^2/s",
+        "Pg C",
+        # carbon written into the symbol
+        "mmolC/m^2/s",
+        # malformed
+        "mmol//m^2/s",
+        "/mmol",
+        "mmol/m^2/",
+        "mmol/(m^2 s)",
+        "mmol mmol/m^2/s",
+        "mmol^2/m^2",
+        "nondimensional",
+        "1",
+    ],
+)
+def test_units_contract_refuses_unsupported_or_malformed(units):
+    with pytest.raises(ValueError):
+        _native_dic_amount_to_mol_multiplier(units, _FLUX_DIMS)
+
+
+@pytest.mark.parametrize("units", [None, "", "   "])
+def test_units_contract_missing_units_default_to_mmol(units, caplog):
+    with caplog.at_level(logging.WARNING):
+        assert _native_dic_amount_to_mol_multiplier(units, _FLUX_DIMS) == 1e-3
+    assert "missing" in caplog.text
+
+
+def test_units_contract_covers_every_variable_read():
+    assert set(_UNIT_CONTRACT) == {
+        "FG_CO2", "FG_ALT_CO2", "hDIC", "hDIC_ALT_CO2",
+        "ALK_source", "ALK_ALT_source", "DIC_source", "DIC_ALT_source",
+    }
+
+
+def _ucla_roms_units(ds):
+    ds["FG_CO2"].attrs["units"] = "mmol/m^2/s"
+    ds["FG_ALT_CO2"].attrs["units"] = "mmol/m^2/s"
+    ds["hDIC"].attrs["units"] = "meters mmol/m^3"
+    ds["hDIC_ALT_CO2"].attrs["units"] = "meters mmol/m^3"
+    ds["ALK_source"].attrs["units"] = "meq/s"
+    ds["DIC_source"].attrs["units"] = "mmol/s"
+    return ds
+
+
+@pytest.mark.parametrize(
+    ("var", "units"),
+    [
+        ("FG_CO2", "umol/kg"),
+        ("FG_ALT_CO2", "mmol/m^2"),
+        ("hDIC", "mmol/m^3"),
+        ("hDIC_ALT_CO2", "umol/kg"),
+        ("ALK_source", "meq/m^3"),
+        ("ALK_source", "mmol/s"),
+        ("DIC_source", "meq/s"),
+        ("DIC_source", "mmol/m^2/s"),
+    ],
+)
+def test_compute_cdr_metrics_refuses_wrong_dimensions(minimal_ds, minimal_grid_ds, var, units):
+    ds = _ucla_roms_units(minimal_ds.copy())
+    ds[var].attrs["units"] = units
+    with pytest.raises(ValueError, match=var):
+        compute_cdr_metrics(ds, minimal_grid_ds)
+
+
+def test_compute_cdr_metrics_ucla_roms_units_unchanged(minimal_ds, minimal_grid_ds):
+    """With ucla-roms' units every result equals the result without units."""
+    plain = compute_cdr_metrics(minimal_ds, minimal_grid_ds)
+    labelled = compute_cdr_metrics(_ucla_roms_units(minimal_ds.copy()), minimal_grid_ds)
+    for var in [
+        "cdr_efficiency_from_flux",
+        "cdr_efficiency_from_DIC_difference",
+        "cdr_carbon_uptake_from_flux",
+        "cdr_carbon_uptake_from_DIC_difference",
+        "cdr_cumulative_source",
+    ]:
+        xr.testing.assert_identical(plain[var].drop_attrs(), labelled[var].drop_attrs())
+
+
+def test_compute_cdr_metrics_converts_mixed_prefixes(minimal_ds, minimal_grid_ds):
+    """The same physical data in mol and umol give the same efficiencies and tonnes:
+    previously the efficiency divided an uptake in one prefix by a source in another."""
+    ref = compute_cdr_metrics(_ucla_roms_units(minimal_ds.copy()), minimal_grid_ds)
+    ds = _ucla_roms_units(minimal_ds.copy())
+    ds["FG_CO2"] = ds["FG_CO2"] * 1e-3
+    ds["FG_ALT_CO2"] = ds["FG_ALT_CO2"] * 1e-3
+    ds["FG_CO2"].attrs["units"] = ds["FG_ALT_CO2"].attrs["units"] = "mol/m^2/s"
+    ds["hDIC_ALT_CO2"] = ds["hDIC_ALT_CO2"] * 1e3
+    ds["hDIC_ALT_CO2"].attrs["units"] = "meters umol/m^3"
+    ds["DIC_source"] = ds["DIC_source"] * 1e3
+    ds["DIC_source"].attrs["units"] = "umol/s"
+    mixed = compute_cdr_metrics(ds, minimal_grid_ds)
+    for var in [
+        "cdr_efficiency_from_flux",
+        "cdr_efficiency_from_DIC_difference",
+        "cdr_carbon_uptake_from_flux",
+        "cdr_carbon_uptake_from_DIC_difference",
+    ]:
+        np.testing.assert_allclose(mixed[var], ref[var], rtol=1e-12)

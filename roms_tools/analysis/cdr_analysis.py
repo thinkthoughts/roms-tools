@@ -1,4 +1,5 @@
 import logging
+import re
 import typing as t
 
 import numpy as np
@@ -84,11 +85,24 @@ def compute_cdr_metrics(
         ``ds_cdr.attrs["cdr_source_role"]`` records `source_role`, so the dataset
         is self-describing for downstream combination.
 
+    Notes
+    -----
+    Units contract. ``FG_CO2`` and ``FG_ALT_CO2`` must be an amount of carbon per area
+    per second, ``hDIC`` and ``hDIC_ALT_CO2`` an amount per area (ucla-roms writes
+    ``meters mmol/m^3``), ``DIC_source`` (and ``DIC_ALT_source``) an amount per second
+    and ``ALK_source`` (and ``ALK_ALT_source``) equivalents per second, with lengths in
+    metres; mol, mmol, umol and nmol (eq, meq, ueq, neq) are converted, so variables may
+    use different prefixes. Other units, such as ``umol/kg``, CGS units or days, raise a
+    ``ValueError``. Missing units are taken as the ucla-roms milli-units (with a warning
+    for ``FG_CO2`` and ``hDIC``). One equivalent of alkalinity is counted as one mole in
+    the cumulative source.
+
     Raises
     ------
     ValueError
-        If `source_role` is not one of ``SOURCE_ROLES``, or if ``source_role="release"``
-        and the source violates the release sign constraints.
+        If `source_role` is not one of ``SOURCE_ROLES``, if ``source_role="release"``
+        and the source violates the release sign constraints, or if a variable's
+        ``units`` attribute breaks the units contract below.
     KeyError
         If required variables are missing from `ds` or `grid_ds`.
     """
@@ -142,10 +156,25 @@ def compute_cdr_metrics(
 
     _validate_source(ds, source_role)
 
-    # Cumulative alkalinity source
+    # Units contract (see _UNIT_CONTRACT): moles (or equivalents) per native unit of
+    # each variable. Quantities are combined in the native units of FG_CO2, hDIC and
+    # ALK_source, so with ucla-roms' units every ratio below is exactly 1.
+    mol_flux = _native_dic_amount_to_mol_multiplier(
+        ds["FG_CO2"].attrs.get("units"), _FLUX_DIMS, "FG_CO2"
+    )
+    mol_flux_alt = _contract_factor(ds, "FG_ALT_CO2", mol_flux)
+    mol_hdic = _native_dic_amount_to_mol_multiplier(
+        ds["hDIC"].attrs.get("units"), _INVENTORY_DIMS, "hDIC"
+    )
+    mol_hdic_alt = _contract_factor(ds, "hDIC_ALT_CO2", mol_hdic)
+    eq_alk = _contract_factor(ds, "ALK_source")
+    mol_dic_source = _contract_factor(ds, "DIC_source")
+
+    # Cumulative alkalinity source, in the units of ALK_source (one equivalent of
+    # alkalinity counted as one mole, as in the efficiency's definition)
     source = (
         (
-            (ds["ALK_source"] - ds["DIC_source"]).sum(
+            (ds["ALK_source"] - ds["DIC_source"] * (mol_dic_source / eq_alk)).sum(
                 dim=["s_rho", "eta_rho", "xi_rho"]
             )
             * ds_cdr["window_length"]
@@ -157,7 +186,7 @@ def compute_cdr_metrics(
     # Cumulative flux-based uptake (Method 1)
     flux = (
         (
-            ((ds["FG_CO2"] - ds["FG_ALT_CO2"]) * ds_cdr["area"])
+            ((ds["FG_CO2"] - ds["FG_ALT_CO2"] * (mol_flux_alt / mol_flux)) * ds_cdr["area"])
             .isel(_INTERIOR)
             .sum(dim=["eta_rho", "xi_rho"])
             * ds_cdr["window_length"]
@@ -168,7 +197,7 @@ def compute_cdr_metrics(
 
     # DIC difference-based uptake (Method 2)
     diff_DIC = (
-        ((ds["hDIC"] - ds["hDIC_ALT_CO2"]) * ds_cdr["area"])
+        ((ds["hDIC"] - ds["hDIC_ALT_CO2"] * (mol_hdic_alt / mol_hdic)) * ds_cdr["area"])
         .isel(_INTERIOR)
         .sum(dim=["s_rho", "eta_rho", "xi_rho"])
         .compute()
@@ -177,10 +206,10 @@ def compute_cdr_metrics(
     if source_role == "release":
         # Normalize by cumulative source with safe division (NaN where source=0)
         with np.errstate(divide="ignore", invalid="ignore"):
-            uptake_efficiency_flux = (flux / source).where(np.isfinite(flux / source))
-            uptake_efficiency_diff = (diff_DIC / source).where(
-                np.isfinite(diff_DIC / source)
-            )
+            ratio_flux = (flux / source) * (mol_flux / eq_alk)
+            ratio_diff = (diff_DIC / source) * (mol_hdic / eq_alk)
+            uptake_efficiency_flux = ratio_flux.where(np.isfinite(ratio_flux))
+            uptake_efficiency_diff = ratio_diff.where(np.isfinite(ratio_diff))
 
         _validate_uptake_efficiency(uptake_efficiency_flux, uptake_efficiency_diff)
         description_suffix = ""
@@ -192,10 +221,8 @@ def compute_cdr_metrics(
             "transfer, not a release)"
         )
 
-    flux_units = ds["FG_CO2"].attrs.get("units")
-    hdic_units = ds["hDIC"].attrs.get("units")
-    flux_scale = _native_carbon_amount_to_tonnes_co2_scale(flux_units)
-    dic_scale = _native_carbon_amount_to_tonnes_co2_scale(hdic_units)
+    flux_scale = mol_flux * _MOLAR_MASS_CO2_KG_PER_MOL / 1000.0
+    dic_scale = mol_hdic * _MOLAR_MASS_CO2_KG_PER_MOL / 1000.0
     flux_tonnes_co2 = flux * flux_scale
     diff_dic_tonnes_co2 = diff_DIC * dic_scale
 
@@ -322,7 +349,9 @@ def _validate_source(ds: xr.Dataset, source_role: SourceRole):
             )
 
 
-def _native_carbon_amount_to_tonnes_co2_scale(units: str | None) -> float:
+def _native_carbon_amount_to_tonnes_co2_scale(
+    units: str | None, expected: tuple[str, ...] | None = None
+) -> float:
     """
     Scale factor from integrated ROMS-style DIC carbon amounts to tonnes CO2.
 
@@ -332,38 +361,156 @@ def _native_carbon_amount_to_tonnes_co2_scale(units: str | None) -> float:
 
         tonnes CO2 = n_C (mol) * M_CO2 (kg mol^-1) / (1000 kg tonne^-1)
 
-    ``n_C`` is obtained from the native amount (e.g. mmol) using metadata units
-    when present; missing units default to mmol (typical ROMS BGC).
+    ``n_C`` is obtained from the native amount using the units contract of
+    :func:`_native_dic_amount_to_mol_multiplier`; missing units default to mmol.
     """
-    mol_per_native = _native_dic_amount_to_mol_multiplier(units)
+    mol_per_native = _native_dic_amount_to_mol_multiplier(units, expected)
     kg_co2_per_native = mol_per_native * _MOLAR_MASS_CO2_KG_PER_MOL
     return kg_co2_per_native / 1000.0
 
 
-def _native_dic_amount_to_mol_multiplier(units: str | None) -> float:
-    """Convert one native unit of DIC carbon inventory to moles carbon."""
-    if units is None:
+# Units contract of the CDR metrics. ucla-roms (cdr_output.F90) writes MARBL's MKS
+# units (marbl_driver.F90 sets unit_system_opt = 'mks'): FG_CO2 and FG_ALT_CO2 in
+# "mmol/m^2/s", hDIC and hDIC_ALT_CO2 in "meters mmol/m^3", ALK_source and
+# ALK_ALT_source in "meq/s", DIC_source and DIC_ALT_source in "mmol/s". The metrics
+# integrate fluxes over grid areas in m^2 (1 / (pm * pn)) and windows in seconds, and
+# inventories over areas in m^2, so each variable must have exactly the dimensions
+# below; any amount prefix is converted, nothing else is.
+_AMOUNT_UNITS = {"mol": 1.0, "mmol": 1e-3, "umol": 1e-6, "nmol": 1e-9}
+_EQUIVALENT_UNITS = {"eq": 1.0, "meq": 1e-3, "ueq": 1e-6, "neq": 1e-9}
+_LENGTH_UNITS = {"m": "m", "meter": "m", "meters": "m", "metre": "m", "metres": "m"}
+_TIME_UNITS = {"s": "s", "sec": "s", "second": "s", "seconds": "s"}
+# Recognised so that mass-normalised units (e.g. umol/kg) are reported as having the
+# wrong dimensions; no contract variable accepts mass.
+_MASS_UNITS = {"kg", "g"}
+# Dimensions as sorted (base, exponent) pairs; N: amount of carbon, E: equivalents
+# of alkalinity, L: length, T: time, M: mass.
+_FLUX_DIMS = (("L", -2), ("N", 1), ("T", -1))
+_INVENTORY_DIMS = (("L", -2), ("N", 1))
+_RATE_DIMS = (("N", 1), ("T", -1))
+_ALK_RATE_DIMS = (("E", 1), ("T", -1))
+_UNIT_CONTRACT: dict[str, tuple] = {
+    "FG_CO2": _FLUX_DIMS,
+    "FG_ALT_CO2": _FLUX_DIMS,
+    "hDIC": _INVENTORY_DIMS,
+    "hDIC_ALT_CO2": _INVENTORY_DIMS,
+    "DIC_source": _RATE_DIMS,
+    "DIC_ALT_source": _RATE_DIMS,
+    "ALK_source": _ALK_RATE_DIMS,
+    "ALK_ALT_source": _ALK_RATE_DIMS,
+}
+_UNIT_TOKEN = re.compile(r"^([a-z]+)(?:\^|\*\*)?(-?\d+)?$")
+_DIMENSION_NAMES = {
+    _FLUX_DIMS: "amount per area per time (e.g. mmol/m^2/s)",
+    _INVENTORY_DIMS: "amount per area (e.g. meters mmol/m^3 or mmol/m^2)",
+    _RATE_DIMS: "amount per time (e.g. mmol/s)",
+    _ALK_RATE_DIMS: "equivalents per time (e.g. meq/s)",
+}
+
+
+def _parse_units(units: str) -> tuple[float, tuple]:
+    """Factor to mol (or eq), and dimensions, of a units string.
+
+    Grammar: factors separated by spaces, ``*`` or ``.``; ``/`` divides by the next
+    factor only (``mmol/m^2/s`` = mmol m^-2 s^-1; ``mmol/m^3 cm/s`` = mmol m^-3 cm s^-1);
+    a factor is a unit symbol with an optional integer exponent (``m^2``, ``m**2``,
+    ``m2``, ``m-2``). Supported symbols: mol, mmol, umol, nmol, eq, meq, ueq, neq,
+    m (meter, metre and plurals), s (sec, second and plurals).
+
+    Raises
+    ------
+    ValueError
+        On an empty or malformed string, an unsupported symbol (centimetres, mass,
+        hours, days, ...), or more than one amount factor.
+    """
+    u = units.strip().replace("µ", "u").replace("μ", "u").replace("micromol", "umol")
+    u = u.replace("**", "^").replace("·", " ").replace("*", " ")
+    if not u or "(" in u or ")" in u or "//" in u or u.startswith("/") or u.endswith("/"):
+        raise ValueError(f"malformed units {units!r}")
+    tokens = re.findall(r"/|[^\s/]+", u)
+    factor = 1.0
+    dims: dict[str, int] = {}
+    amounts = 0
+    sign = 1
+    for tok in tokens:
+        if tok == "/":
+            if sign == -1:
+                raise ValueError(f"malformed units {units!r}")
+            sign = -1
+            continue
+        for part in tok.split("."):
+            if not part:
+                raise ValueError(f"malformed units {units!r}")
+            m = _UNIT_TOKEN.match(part.lower())
+            if m is None:
+                raise ValueError(f"malformed units {units!r} (at {part!r})")
+            symbol, exp = m.group(1), int(m.group(2) or 1)
+            exp *= sign
+            if symbol in _AMOUNT_UNITS or symbol in _EQUIVALENT_UNITS:
+                if exp != 1:
+                    raise ValueError(f"units {units!r} have an amount to a power")
+                amounts += 1
+                base = "N" if symbol in _AMOUNT_UNITS else "E"
+                factor *= _AMOUNT_UNITS.get(symbol) or _EQUIVALENT_UNITS[symbol]
+            elif symbol in _LENGTH_UNITS:
+                base = "L"
+            elif symbol in _TIME_UNITS:
+                base = "T"
+            elif symbol in _MASS_UNITS:
+                base = "M"
+            else:
+                raise ValueError(
+                    f"units {units!r} contain {part!r}, which is not a supported unit "
+                    "(mol, mmol, umol, nmol, eq, meq, ueq, neq, m, s)"
+                )
+            dims[base] = dims.get(base, 0) + exp
+        sign = 1
+    if sign == -1:
+        raise ValueError(f"malformed units {units!r}")
+    if amounts != 1:
+        raise ValueError(f"units {units!r} must name exactly one amount of substance")
+    return factor, tuple(sorted((k, v) for k, v in dims.items() if v != 0))
+
+
+def _native_dic_amount_to_mol_multiplier(
+    units: str | None, expected: tuple[str, ...] | None = None, var: str = "DIC carbon"
+) -> float:
+    """Moles (or equivalents) per native unit, after checking the units' dimensions.
+
+    ``expected`` is one or more of the dimension tuples of ``_UNIT_CONTRACT``; by
+    default a carbon flux or inventory (``_FLUX_DIMS`` or ``_INVENTORY_DIMS``). Missing
+    or blank units are taken as mmol, the ucla-roms convention, with a warning.
+
+    Raises
+    ------
+    ValueError
+        If the units are malformed, use an unsupported unit, or have other dimensions
+        than expected (for example ``umol/kg``, mass-normalised, where an amount per
+        area is expected).
+    """
+    if expected is None:
+        expected = (_FLUX_DIMS, _INVENTORY_DIMS)
+    elif expected and isinstance(expected[0][0], str):
+        expected = (expected,)
+    if units is None or not str(units).strip():
         logging.warning(
-            "DIC carbon amount units are missing; assuming mmol for conversion to tonnes CO2."
+            "%s amount units are missing; assuming mmol for conversion to tonnes CO2.", var
         )
         return 1e-3
-    u = units.strip().lower().replace(" ", "").replace("µ", "u")
-    if u.startswith("mmol") or "mmol/" in u:
-        return 1e-3
-    if u.startswith("umol") or "umol/" in u or "micromol" in u:
-        logging.warning(
-            "DIC carbon amount units %r are not mmol; using umol-to-mol conversion.",
-            units,
-        )
-        return 1e-6
-    if (u.startswith("mol") or u.startswith("mole")) and not u.startswith("mmol"):
-        logging.warning(
-            "DIC carbon amount units %r are not mmol; using mol-to-mol conversion.",
-            units,
-        )
-        return 1.0
-    logging.warning(
-        "DIC carbon amount units %r are not recognized as mmol; assuming mmol.",
-        units,
-    )
-    return 1e-3
+    try:
+        factor, dims = _parse_units(str(units))
+    except ValueError as e:
+        raise ValueError(f"{var}: {e}") from None
+    if dims not in expected:
+        wanted = " or ".join(_DIMENSION_NAMES.get(d, str(d)) for d in expected)
+        raise ValueError(f"{var} units {units!r} are not {wanted}.")
+    return factor
+
+
+def _contract_factor(ds: xr.Dataset, var: str, default: float = 1e-3) -> float:
+    """Factor to mol (or eq) of ``ds[var]`` under ``_UNIT_CONTRACT``. Missing units
+    give ``default`` without a warning (source terms: the ucla-roms milli-units)."""
+    units = ds[var].attrs.get("units")
+    if units is None or not str(units).strip():
+        return default
+    return _native_dic_amount_to_mol_multiplier(units, _UNIT_CONTRACT[var], var)
