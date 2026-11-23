@@ -1,0 +1,1 @@
+`join_datasets` and `join_netcdf` copy coarse-grid variables that every tile holds whole, as ucla-roms `partit` writes them and as `partition(..., include_coarse_dims=False)` leaves them, instead of concatenating the copies (a 13 x 20 `angle_coarse` came back 26 x 60 from 3 x 2 tiles). ucla-roms `ncjoin` copies such dimensions too.
