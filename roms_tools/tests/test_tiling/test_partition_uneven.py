@@ -11,7 +11,6 @@ Fortran lines of ucla-roms 0.16.0 unchanged.
 
 import numpy as np
 import pytest
-import xarray as xr
 import xarray.testing as xrt
 
 from roms_tools import Grid
@@ -22,7 +21,9 @@ from roms_tools.tiling.partition import partition
 @pytest.fixture(scope="module")
 def grid10():
     # 10 x 10 interior rho points: xi_rho = 12, xi_u = 11, xi_coarse = 7
-    return Grid(nx=10, ny=10, size_x=500, size_y=500, center_lon=-20, center_lat=0, rot=0)
+    return Grid(
+        nx=10, ny=10, size_x=500, size_y=500, center_lon=-20, center_lat=0, rot=0
+    )
 
 
 def test_ten_points_on_three_tiles_matches_ucla_roms(grid10):

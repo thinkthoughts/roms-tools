@@ -209,7 +209,8 @@ def _coarse_is_whole(
 def _fine_rho_points(tiles: Sequence[xr.Dataset], axis: str) -> int | None:
     """Rho points of the joined fine grid along ``axis`` ("xi" or "eta"), from one
     row (xi) or column (eta) of tiles; ``None`` if the tiles carry no rho or
-    u/v dimension along it."""
+    u/v dimension along it.
+    """
     staggered = "xi_u" if axis == "xi" else "eta_v"
     if all(f"{axis}_rho" in t.sizes for t in tiles):
         return sum(t.sizes[f"{axis}_rho"] for t in tiles)

@@ -71,7 +71,9 @@ def _compute_partition_sizes(
     return sizes
 
 
-def _rho_starts(partitioned_sizes: dict[str, list[int]], axis: str, nparts: int) -> list[int] | None:
+def _rho_starts(
+    partitioned_sizes: dict[str, list[int]], axis: str, nparts: int
+) -> list[int] | None:
     """1-based index, in the whole grid's rho points, of each tile's first rho point
     along ``axis``, as ucla-roms records it in the ``partition`` attribute
     (``iSW_corn + iwest`` on the first tile, ``iSW_corn + iwest + 1`` on the others).
