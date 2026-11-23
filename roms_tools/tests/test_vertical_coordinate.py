@@ -92,9 +92,12 @@ UCLA_ROMS_CSF = {
 @pytest.mark.parametrize(("theta_s", "theta_b"), list(UCLA_ROMS_CSF))
 def test_compute_cs_matches_ucla_roms_csf(theta_s, theta_b):
     """ucla-roms takes theta_s = 0 as csrf = -sigma**2 and theta_b = 0 as no bottom
-    refinement (CSF = csrf); both are the theta -> 0 limits of the stretching."""
+    refinement (CSF = csrf); both are the theta -> 0 limits of the stretching.
+    """
     cs = compute_cs(np.array([-0.9, -0.5]), theta_s, theta_b)
-    np.testing.assert_allclose(cs, UCLA_ROMS_CSF[(theta_s, theta_b)], rtol=1e-14, atol=0)
+    np.testing.assert_allclose(
+        cs, UCLA_ROMS_CSF[(theta_s, theta_b)], rtol=1e-14, atol=0
+    )
 
 
 @pytest.mark.parametrize(("theta_s", "theta_b"), [(0.0, 0.0), (0.0, 2.0), (5.0, 0.0)])
