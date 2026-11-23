@@ -230,10 +230,13 @@ class TestPartitionGrid:
         ):
             partition(grid.ds, np_eta=-3, np_xi=1)
 
-        with pytest.raises(ValueError, match="cannot be evenly divided"):
-            partition(grid.ds, np_eta=4, np_xi=1)
+        # 30 interior points on 20 tiles: ucla-roms gives each tile 2 and takes the
+        # surplus of 10 from the first and last tile, leaving them empty.
+        with pytest.raises(ValueError, match="leaves a tile with no points"):
+            partition(grid.ds, np_eta=20, np_xi=1)
 
-        with pytest.raises(ValueError, match="cannot be evenly divided"):
+        # 30 rho points divide by 10, but the 15 coarse points leave empty tiles.
+        with pytest.raises(ValueError, match="leaves a tile with no points"):
             partition(grid.ds, np_eta=10, np_xi=10)
 
     def test_skip_coarse_dims(self, grid):

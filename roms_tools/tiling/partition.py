@@ -23,12 +23,28 @@ DIM_INFO = {
 }
 
 
-def _exact_division(size: int, nparts: int, dim: str) -> int:
-    if size % nparts != 0:
+def _interior_widths(points: int, nparts: int, dim: str) -> list[int]:
+    """Interior points of each tile, split the way ucla-roms splits them.
+
+    ucla-roms ``mpi_setup`` (``src/roms_mpi.F90``), its reference partitioner
+    ``partit`` (``Tools-Roms/partit.F``) and ``init_coarse`` (coarse grid,
+    ``src/roms_read_write.F90``) give every tile ``ceil(points / nparts)`` points and
+    take the surplus from the first tile (half, rounded down) and the last tile (the
+    rest). When ``nparts`` divides ``points`` every tile gets ``points / nparts``.
+    """
+    width = -(-points // nparts)
+    surplus = nparts * width - points
+    widths = [width] * nparts
+    widths[0] -= surplus // 2
+    widths[-1] -= (surplus + 1) // 2
+    if min(widths) < 1:
         raise ValueError(
-            f"Dimension '{dim}' of size {size} cannot be evenly divided into {nparts} partitions."
+            f"Splitting the {points} interior points of dimension '{dim}' into "
+            f"{nparts} partitions leaves a tile with no points (ucla-roms gives every "
+            f"tile {width} and takes the surplus of {surplus} from the first and last "
+            "tile)."
         )
-    return size // nparts
+    return widths
 
 
 def _compute_partition_sizes(
@@ -42,9 +58,7 @@ def _compute_partition_sizes(
     if nparts == 1:
         return [total_size]
 
-    core = _exact_division(total_size - ghost, nparts, dim)
-
-    sizes = [core] * nparts
+    sizes = _interior_widths(total_size - ghost, nparts, dim)
 
     if edge == "both":
         sizes[0] += ghost // 2
@@ -101,8 +115,16 @@ def partition(
     Raises
     ------
     ValueError
-        If `np_eta` or `np_xi` is not a positive integer, or if the dataset cannot be evenly partitioned
-        into the specified number of tiles.
+        If `np_eta` or `np_xi` is not a positive integer, or if splitting a dimension into the
+        specified number of tiles would leave a tile with no interior points.
+
+    Notes
+    -----
+    Tiles follow ucla-roms' domain decomposition (``mpi_setup``): along each dimension every
+    tile gets ``ceil(points / n)`` interior points, and the surplus is removed from the first
+    tile (half, rounded down) and the last tile (the rest), so tilings that do not divide the
+    grid evenly are supported. When ``n`` divides the number of interior points all tiles have
+    the same interior size.
 
 
     Example
