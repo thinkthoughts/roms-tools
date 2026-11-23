@@ -372,3 +372,24 @@ def test_invalid_source_role(minimal_ds, minimal_grid_ds):
     with pytest.raises(ValueError, match="source_role"):
         compute_cdr_metrics(minimal_ds, minimal_grid_ds, source_role="bogus")  # type: ignore[arg-type]
     assert SOURCE_ROLES == ("release", "transfer")
+
+
+def test_tonnes_co2_per_mmol_independent_value() -> None:
+    """The scale from mmol of carbon to tonnes of CO2, computed independently of the
+    module constant.
+
+    One mole of carbon counted as one mole of CO2 (CO2 holds one carbon atom), with the
+    IUPAC 2007 standard atomic weights C 12.0107 and O 15.9994 (Pure Appl. Chem. 81,
+    2131-2156, 2009): M(CO2) = 12.0107 + 2 * 15.9994 = 44.0095 g/mol, so
+    1 mmol C -> 44.0095e-3 g = 44.0095e-9 t = 4.40095e-8 t.
+    """
+    from fractions import Fraction
+
+    m_co2 = Fraction("12.0107") + 2 * Fraction("15.9994")
+    assert m_co2 == Fraction("44.0095")
+    tonnes_per_mmol = Fraction(1, 1000) * m_co2 / 10**6  # mol/mmol * g/mol * t/g
+    assert tonnes_per_mmol == Fraction(88019, 2 * 10**12)
+    for units in ["mmol/m^2/s", "mmol/m^2", "meters mmol/m^3"]:
+        scale = _native_carbon_amount_to_tonnes_co2_scale(units)
+        assert abs(Fraction(scale) - tonnes_per_mmol) <= tonnes_per_mmol * Fraction(1, 10**15)
+

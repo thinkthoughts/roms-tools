@@ -4,7 +4,10 @@ import typing as t
 import numpy as np
 import xarray as xr
 
-# Molar mass of CO2 (kg mol^-1), 44.0095 g mol^-1 (IUPAC-style value for conversions).
+# Molar mass of CO2 (kg mol^-1): 44.0095 g mol^-1 = 12.0107 + 2 * 15.9994, the standard
+# atomic weights of carbon and oxygen in the IUPAC 2007 table (Pure Appl. Chem. 81,
+# 2131-2156, 2009). CIAAW's current abridged values (C 12.011 +- 0.002, O 15.999 +- 0.001)
+# give 44.009 +- 0.004, which includes 44.0095.
 _MOLAR_MASS_CO2_KG_PER_MOL = 44.0095e-3
 
 # "release" is the CDR intervention itself; "transfer" is a parent domain receiving
