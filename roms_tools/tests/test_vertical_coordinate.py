@@ -104,16 +104,33 @@ def test_compute_cs_endpoints_with_zero_theta(theta_s, theta_b):
 
 
 def test_compute_cs_is_continuous_at_zero_theta():
-    # theta_s -> 0: (1 - cosh(t s)) / (cosh t - 1) = -s**2 + O(t**2); the formula loses
-    # about 4e-16 / t**2 to cancellation (in ucla-roms too), so t = 1e-3 tests both.
+    # theta_s -> 0: (1 - cosh(t s)) / (cosh t - 1) = -s**2 + O(t**2).
     # theta_b -> 0: (exp(t C) - 1) / (1 - exp(-t)) = C + O(t).
     sigma = np.linspace(-1, 0, 41)
     np.testing.assert_allclose(
-        compute_cs(sigma, 1e-3, 2.0), compute_cs(sigma, 0.0, 2.0), atol=1e-6
+        compute_cs(sigma, 1e-6, 2.0), compute_cs(sigma, 0.0, 2.0), rtol=0, atol=1e-12
     )
     np.testing.assert_allclose(
-        compute_cs(sigma, 5.0, 1e-3), compute_cs(sigma, 5.0, 0.0), atol=1e-3
+        compute_cs(sigma, 5.0, 1e-9), compute_cs(sigma, 5.0, 0.0), rtol=0, atol=1e-9
     )
+
+
+# The stretching at sigma = -0.9 and -0.5 to 18 digits, from the defining formulas
+# evaluated in 50-digit arithmetic (mpmath; RLT-CSTAR-007 f011/csf_accuracy.py). The
+# float64 formulas lose up to 4e-4 at theta_s = 1e-6 and give NaN at theta_s = 1e-8.
+CSF_50_DIGITS = {
+    (1e-08, 0.0): (-0.810000000000000039, -0.249999999999999998),
+    (1e-06, 2.0): (-0.927644305782252332, -0.455054233923389324),
+    (0.0001, 1e-10): (-0.80999999987944504, -0.249999999853125),
+    (5.0, 1e-10): (-0.601204085459848563, -0.0701037165483676162),
+    (10.0, 1e-06): (-0.367822160611032127, -0.00664805997272070456),
+}
+
+
+@pytest.mark.parametrize(("theta_s", "theta_b"), list(CSF_50_DIGITS))
+def test_compute_cs_is_accurate_for_small_theta(theta_s, theta_b):
+    cs = compute_cs(np.array([-0.9, -0.5]), theta_s, theta_b)
+    np.testing.assert_allclose(cs, CSF_50_DIGITS[(theta_s, theta_b)], rtol=0, atol=1e-15)
 
 
 @pytest.mark.parametrize(("theta_s", "theta_b"), [(-0.1, 2.0), (5.0, -0.1)])
