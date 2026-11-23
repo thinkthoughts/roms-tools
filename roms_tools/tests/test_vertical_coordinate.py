@@ -133,7 +133,9 @@ CSF_50_DIGITS = {
 @pytest.mark.parametrize(("theta_s", "theta_b"), list(CSF_50_DIGITS))
 def test_compute_cs_is_accurate_for_small_theta(theta_s, theta_b):
     cs = compute_cs(np.array([-0.9, -0.5]), theta_s, theta_b)
-    np.testing.assert_allclose(cs, CSF_50_DIGITS[(theta_s, theta_b)], rtol=0, atol=1e-15)
+    np.testing.assert_allclose(
+        cs, CSF_50_DIGITS[(theta_s, theta_b)], rtol=0, atol=1e-15
+    )
 
 
 @pytest.mark.parametrize(("theta_s", "theta_b"), [(-0.1, 2.0), (5.0, -0.1)])
