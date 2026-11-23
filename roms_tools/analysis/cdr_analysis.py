@@ -383,6 +383,10 @@ _TIME_UNITS = {"s": "s", "sec": "s", "second": "s", "seconds": "s"}
 # Recognised so that mass-normalised units (e.g. umol/kg) are reported as having the
 # wrong dimensions; no contract variable accepts mass.
 _MASS_UNITS = {"kg", "g"}
+# Symbols are case-sensitive, as in UDUNITS ("M" is mega, so "Mmol" is a megamole, not
+# a millimole). The one other spelling accepted is the one ucla-roms writes for its own
+# passive and CDR tracers (src/tracers.F90: 'mMol m-3').
+_SYMBOL_ALIASES = {"mMol": "mmol"}
 # Dimensions as sorted (base, exponent) pairs; N: amount of carbon, E: equivalents
 # of alkalinity, L: length, T: time, M: mass.
 _FLUX_DIMS = (("L", -2), ("N", 1), ("T", -1))
@@ -399,7 +403,7 @@ _UNIT_CONTRACT: dict[str, tuple] = {
     "ALK_source": _ALK_RATE_DIMS,
     "ALK_ALT_source": _ALK_RATE_DIMS,
 }
-_UNIT_TOKEN = re.compile(r"^([a-z]+)(?:\^|\*\*)?(-?\d+)?$")
+_UNIT_TOKEN = re.compile(r"^([A-Za-z]+)(?:\^|\*\*)?(-?\d+)?$")
 _DIMENSION_NAMES = {
     _FLUX_DIMS: "amount per area per time (e.g. mmol/m^2/s)",
     _INVENTORY_DIMS: "amount per area (e.g. meters mmol/m^3 or mmol/m^2)",
@@ -415,7 +419,8 @@ def _parse_units(units: str) -> tuple[float, tuple]:
     factor only (``mmol/m^2/s`` = mmol m^-2 s^-1; ``mmol/m^3 cm/s`` = mmol m^-3 cm s^-1);
     a factor is a unit symbol with an optional integer exponent (``m^2``, ``m**2``,
     ``m2``, ``m-2``). Supported symbols: mol, mmol, umol, nmol, eq, meq, ueq, neq,
-    m (meter, metre and plurals), s (sec, second and plurals).
+    m (meter, metre and plurals), s (sec, second and plurals), and ``mMol`` for mmol.
+    Symbols are case-sensitive: ``Mmol`` (megamole) and ``MMOL`` are refused.
 
     Raises
     ------
@@ -441,10 +446,11 @@ def _parse_units(units: str) -> tuple[float, tuple]:
         for part in tok.split("."):
             if not part:
                 raise ValueError(f"malformed units {units!r}")
-            m = _UNIT_TOKEN.match(part.lower())
+            m = _UNIT_TOKEN.match(part)
             if m is None:
                 raise ValueError(f"malformed units {units!r} (at {part!r})")
             symbol, exp = m.group(1), int(m.group(2) or 1)
+            symbol = _SYMBOL_ALIASES.get(symbol, symbol)
             exp *= sign
             if symbol in _AMOUNT_UNITS or symbol in _EQUIVALENT_UNITS:
                 if exp != 1:
@@ -459,9 +465,14 @@ def _parse_units(units: str) -> tuple[float, tuple]:
             elif symbol in _MASS_UNITS:
                 base = "M"
             else:
+                hint = (
+                    "; unit symbols are case-sensitive"
+                    if symbol.lower() in {*_AMOUNT_UNITS, *_EQUIVALENT_UNITS, *_LENGTH_UNITS, *_TIME_UNITS}
+                    else ""
+                )
                 raise ValueError(
                     f"units {units!r} contain {part!r}, which is not a supported unit "
-                    "(mol, mmol, umol, nmol, eq, meq, ueq, neq, m, s)"
+                    f"(mol, mmol, umol, nmol, eq, meq, ueq, neq, m, s){hint}"
                 )
             dims[base] = dims.get(base, 0) + exp
         sign = 1

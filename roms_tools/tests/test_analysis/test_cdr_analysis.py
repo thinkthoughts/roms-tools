@@ -564,3 +564,25 @@ def test_compute_cdr_metrics_converts_mixed_prefixes(minimal_ds, minimal_grid_ds
         "cdr_carbon_uptake_from_DIC_difference",
     ]:
         np.testing.assert_allclose(mixed[var], ref[var], rtol=1e-12)
+
+
+@pytest.mark.parametrize(
+    "units",
+    [
+        "Mmol/m^2/s",  # megamole: read as mmol before, a factor of 1e9
+        "MMOL/M^2/S",
+        "mmol/M^2/s",
+        "mmol/m^2/S",
+        "Mol/m^2/s",
+        "MEQ/s",
+    ],
+)
+def test_units_contract_symbols_are_case_sensitive(units):
+    with pytest.raises(ValueError, match="case-sensitive"):
+        _parse_units(units)
+
+
+def test_units_contract_accepts_ucla_roms_tracer_spelling():
+    # src/tracers.F90 writes 'mMol m-3' for passive and CDR tracers; hDIC is
+    # 'meters ' // t_units.
+    assert _parse_units("meters mMol m-3") == (1e-3, _INVENTORY_DIMS)
