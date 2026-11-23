@@ -1,0 +1,3 @@
+`partition` and `partition_netcdf` now accept tilings that do not divide the grid evenly, splitting each dimension the way ucla-roms does (`mpi_setup` in `roms_mpi.F90`, and `Tools-Roms/partit.F`), so they produce the per-rank files ucla-roms expects for any `np_xi`, `np_eta` that leaves no tile empty.
+* Every tile gets `ceil(points / n)` interior points; the surplus is removed from the first tile (half, rounded down) and the last tile (the rest). Tilings that divide evenly give the same files as before.
+* A tiling that would leave a tile with no interior points is still refused, now with a message naming the interior point count.
